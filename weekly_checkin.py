@@ -15,6 +15,7 @@ import os
 import re
 import smtplib
 import sys
+from email.header import Header
 from calendar import month_name
 from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
@@ -507,15 +508,19 @@ def markdown_to_html(text: str) -> str:
 
 def send_email(brief: str) -> bool:
     try:
+        # Sanitize email addresses (remove hidden \xa0 or whitespace)
+        sender = EMAIL_ADDRESS.strip().replace("\xa0", " ")
+        recipient = EMAIL_RECIPIENT.strip().replace("\xa0", " ")
+
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"Weekly OS Check-in | {TODAY}"
-        msg["From"]    = EMAIL_ADDRESS
-        msg["To"]      = EMAIL_RECIPIENT
+        msg["Subject"] = Header(f"Weekly OS Check-in | {TODAY}", "utf-8")
+        msg["From"]    = sender
+        msg["To"]      = recipient
         msg.attach(MIMEText(brief, "plain", "utf-8"))
         msg.attach(MIMEText(markdown_to_html(brief), "html", "utf-8"))
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_ADDRESS, EMAIL_RECIPIENT, msg.as_string())
+            server.login(sender, EMAIL_PASSWORD)
+            server.sendmail(sender, recipient, msg.as_string())
         return True
     except Exception as e:
         print(f"[Email] Failed: {e}")
