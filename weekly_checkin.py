@@ -16,10 +16,9 @@ import re
 import smtplib
 import sys
 from email.header import Header
+from email.message import EmailMessage
 from calendar import month_name
 from datetime import datetime, timedelta, timezone
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from itertools import groupby
 
 import google.generativeai as genai
@@ -508,19 +507,23 @@ def markdown_to_html(text: str) -> str:
 
 def send_email(brief: str) -> bool:
     try:
-        # Sanitize email addresses (remove hidden \xa0 or whitespace)
         sender = EMAIL_ADDRESS.strip().replace("\xa0", " ")
         recipient = EMAIL_RECIPIENT.strip().replace("\xa0", " ")
 
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = Header(f"Weekly OS Check-in | {TODAY}", "utf-8")
-        msg["From"]    = sender
-        msg["To"]      = recipient
-        msg.attach(MIMEText(brief, "plain", "utf-8"))
-        msg.attach(MIMEText(markdown_to_html(brief), "html", "utf-8"))
+        msg = EmailMessage()
+        msg["Subject"] = f"Weekly OS Check-in | {TODAY}"
+        msg["From"] = sender
+        msg["To"] = recipient
+
+        # Set the plain text body
+        msg.set_content(brief)
+
+        # Add the HTML version
+        msg.add_alternative(markdown_to_html(brief), subtype="html")
+
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(sender, EMAIL_PASSWORD)
-            server.sendmail(sender, recipient, msg.as_string())
+            server.send_message(msg)
         return True
     except Exception as e:
         print(f"[Email] Failed: {e}")
