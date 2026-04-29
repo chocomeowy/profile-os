@@ -537,7 +537,7 @@ def main():
     # Step 5: Configure Gemini
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
+        model_name="gemini-1.5-flash-latest",
         system_instruction=SYSTEM_PROMPT.replace("{date}", TODAY),
     )
 

@@ -127,7 +127,7 @@ def seed_goals_log(profile_content: str) -> str:
     """Use Gemini to extract current goals from the profile and create the seed entry."""
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
+        model_name="gemini-1.5-flash-latest",
         system_instruction=SEED_PROMPT,
     )
     response = model.generate_content(
