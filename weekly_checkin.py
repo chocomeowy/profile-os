@@ -507,19 +507,23 @@ def markdown_to_html(text: str) -> str:
 
 def send_email(brief: str) -> bool:
     try:
+        # Nuclear fix: Force replace non-breaking spaces and sanitize
+        clean_brief = brief.replace("\xa0", " ")
+        clean_subject = f"Weekly OS Check-in | {TODAY}".replace("\xa0", " ")
+        
         sender = EMAIL_ADDRESS.strip().replace("\xa0", " ")
         recipient = EMAIL_RECIPIENT.strip().replace("\xa0", " ")
 
         msg = EmailMessage()
-        msg["Subject"] = f"Weekly OS Check-in | {TODAY}"
+        msg["Subject"] = clean_subject
         msg["From"] = sender
         msg["To"] = recipient
 
         # Set the plain text body
-        msg.set_content(brief)
+        msg.set_content(clean_brief)
 
         # Add the HTML version
-        msg.add_alternative(markdown_to_html(brief), subtype="html")
+        msg.add_alternative(markdown_to_html(clean_brief), subtype="html")
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(sender, EMAIL_PASSWORD)
