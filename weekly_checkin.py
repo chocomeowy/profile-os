@@ -14,6 +14,7 @@ import json
 import os
 import re
 import smtplib
+import sys
 from calendar import month_name
 from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
@@ -43,6 +44,23 @@ NOW_UTC    = datetime.now(timezone.utc)
 TODAY      = NOW_UTC.strftime("%A, %d %B %Y")
 TODAY_DATE = NOW_UTC.date()
 
+REQUIRED_VARS = [
+    "GDRIVE_FILE_ID",
+    "GDRIVE_SERVICE_ACCOUNT_JSON",
+    "GEMINI_API_KEY",
+    "EMAIL_ADDRESS",
+    "EMAIL_PASSWORD",
+]
+
+def validate_env() -> None:
+    """Validate that all required environment variables are present and non-empty."""
+    missing = [v for v in REQUIRED_VARS if not os.environ.get(v)]
+    if missing:
+        print("[Weekly OS] ERROR: Missing or empty required environment variables:")
+        for v in missing:
+            print(f"  - {v}")
+        sys.exit(1)
+
 DRIVE_SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/drive.file",
@@ -62,6 +80,9 @@ def build_drive_service():
 
 def _read_file(service, file_id: str) -> str:
     """Read a file's content from Drive. Handles both regular files and Google Docs."""
+    if not file_id or not file_id.strip():
+        raise ValueError("Google Drive file ID is missing or empty.")
+
     # First, check the mimeType
     file_metadata = service.files().get(fileId=file_id, fields="mimeType").execute()
     mime_type = file_metadata.get("mimeType", "")
@@ -478,6 +499,7 @@ def send_email(brief: str) -> bool:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    validate_env()
     print(f"[Weekly OS] Starting check-in for {TODAY}")
 
     # Step 0: Read Telegram replies from the past 7 days

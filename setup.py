@@ -76,6 +76,9 @@ def build_drive_service():
 
 def _read_file(service, file_id: str) -> str:
     """Read a file's content from Drive. Handles both regular files and Google Docs."""
+    if not file_id or not file_id.strip():
+        raise ValueError("Google Drive file ID is missing or empty.")
+
     file_metadata = service.files().get(fileId=file_id, fields="mimeType").execute()
     mime_type = file_metadata.get("mimeType", "")
 
