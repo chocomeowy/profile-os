@@ -447,10 +447,10 @@ def generate_brief(
 
     # Multi-model fallback list
     models_to_try = [
-        "gemini-3.1-flash-lite",
+        "gemini-3.1-flash-lite-preview",
         "gemini-2.5-flash-lite",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-8b"
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash"
     ]
 
     genai.configure(api_key=api_key)
@@ -569,31 +569,7 @@ def send_email(brief: str) -> bool:
 
 def main():
     validate_env()
-    
-    # --- Diagnostics: Check for hidden characters in secrets ---
-    print("\n[Diagnostic] Checking secrets for hidden characters...")
-    secrets_to_check = {
-        "EMAIL_ADDRESS": EMAIL_ADDRESS,
-        "EMAIL_RECIPIENT": EMAIL_RECIPIENT,
-        "EMAIL_PASSWORD": EMAIL_PASSWORD,
-        "GDRIVE_FILE_ID": GDRIVE_FILE_ID,
-    }
-    for name, value in secrets_to_check.items():
-        for i, char in enumerate(value):
-            if ord(char) >= 128:
-                print(f"      WARNING: Found non-ASCII char {repr(char)} (ord {ord(char)}) in {name} at position {i}")
-    
-    # --- Diagnostics: List available models ---
-    try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        print("\n[Diagnostic] Available Gemini models:")
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                print(f"      - {m.name}")
-    except Exception as e:
-        print(f"      Could not list models: {e}")
-
-    print(f"\n[Weekly OS] Starting check-in for {TODAY}")
+    print(f"[Weekly OS] Starting check-in for {TODAY}")
 
     # Step 0: Read Telegram replies from the past 7 days
     replies = []
@@ -632,7 +608,7 @@ def main():
     # For compression, we'll use a simple fallback loop too
     genai.configure(api_key=GEMINI_API_KEY)
     compressed_ok = False
-    for m_name in ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-1.5-flash"]:
+    for m_name in ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "gemini-1.5-flash"]:
         try:
             model_for_comp = genai.GenerativeModel(model_name=m_name)
             goals_log = compress_goals_log(goals_log, model_for_comp)
