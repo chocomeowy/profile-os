@@ -33,8 +33,8 @@ GDRIVE_FILE_ID           = os.environ["GDRIVE_FILE_ID"]
 GDRIVE_SA_JSON           = os.environ["GDRIVE_SERVICE_ACCOUNT_JSON"]
 GDRIVE_GOALS_LOG_FILE_ID = os.environ.get("GDRIVE_GOALS_LOG_FILE_ID", "")
 GEMINI_API_KEY           = os.environ["GEMINI_API_KEY"]
-TELEGRAM_BOT_TOKEN       = os.environ["TELEGRAM_BOT_TOKEN"]
-TELEGRAM_CHAT_ID         = str(os.environ["TELEGRAM_CHAT_ID"])
+TELEGRAM_BOT_TOKEN       = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID         = str(os.environ.get("TELEGRAM_CHAT_ID", ""))
 EMAIL_ADDRESS            = os.environ["EMAIL_ADDRESS"]
 EMAIL_PASSWORD           = os.environ["EMAIL_PASSWORD"]
 EMAIL_RECIPIENT          = os.environ.get("EMAIL_RECIPIENT", EMAIL_ADDRESS)
@@ -61,7 +61,18 @@ def build_drive_service():
 
 
 def _read_file(service, file_id: str) -> str:
-    request = service.files().get_media(fileId=file_id)
+    """Read a file's content from Drive. Handles both regular files and Google Docs."""
+    # First, check the mimeType
+    file_metadata = service.files().get(fileId=file_id, fields="mimeType").execute()
+    mime_type = file_metadata.get("mimeType", "")
+
+    if mime_type.startswith("application/vnd.google-apps."):
+        # It's a Google Doc/Sheet/etc. - we must export it
+        request = service.files().export_media(fileId=file_id, mimeType="text/plain")
+    else:
+        # It's a regular file - download directly
+        request = service.files().get_media(fileId=file_id)
+
     content = request.execute()
     return content.decode("utf-8") if isinstance(content, bytes) else content
 
@@ -470,9 +481,14 @@ def main():
     print(f"[Weekly OS] Starting check-in for {TODAY}")
 
     # Step 0: Read Telegram replies from the past 7 days
-    print("\n[0/7] Reading Telegram replies from the past 7 days...")
-    replies, max_update_id = fetch_telegram_replies()
-    print(f"      {len(replies)} message(s) found.")
+    replies = []
+    max_update_id = 0
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        print("\n[0/7] Reading Telegram replies from the past 7 days...")
+        replies, max_update_id = fetch_telegram_replies()
+        print(f"      {len(replies)} message(s) found.")
+    else:
+        print("\n[0/7] Skipping Telegram replies (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set).")
 
     # Step 1: Connect to Drive
     print("\n[1/7] Connecting to Google Drive...")
@@ -514,13 +530,20 @@ def main():
 
     # Step 7: Deliver
     print("\n[7/7] Sending brief...")
-    tg_ok    = send_telegram(brief)
+    tg_ok = False
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        tg_ok = send_telegram(brief)
+        print(f"      Telegram: {'OK' if tg_ok else 'FAILED'}")
+    else:
+        print("      Telegram: SKIPPED (not configured)")
+
     email_ok = send_email(brief)
-    print(f"      Telegram: {'OK' if tg_ok else 'FAILED'}")
     print(f"      Email:    {'OK' if email_ok else 'FAILED'}")
 
-    if not tg_ok and not email_ok:
-        raise RuntimeError("Both delivery channels failed.")
+    if not tg_ok and not email_ok and (TELEGRAM_BOT_TOKEN or EMAIL_ADDRESS):
+        # Only raise if at least one channel was configured but failed
+        if not email_ok:
+            raise RuntimeError("Email delivery failed.")
 
     # Post-send: acknowledge Telegram updates + append to goals log
     acknowledge_telegram_updates(max_update_id)

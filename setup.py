@@ -44,6 +44,9 @@ REQUIRED_VARS = [
     "GDRIVE_FILE_ID",
     "GDRIVE_SERVICE_ACCOUNT_JSON",
     "GEMINI_API_KEY",
+]
+
+OPTIONAL_VARS = [
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHAT_ID",
 ]
@@ -71,10 +74,22 @@ def build_drive_service():
     return build("drive", "v3", credentials=creds)
 
 
-def fetch_profile(service) -> str:
-    request = service.files().get_media(fileId=os.environ["GDRIVE_FILE_ID"])
+def _read_file(service, file_id: str) -> str:
+    """Read a file's content from Drive. Handles both regular files and Google Docs."""
+    file_metadata = service.files().get(fileId=file_id, fields="mimeType").execute()
+    mime_type = file_metadata.get("mimeType", "")
+
+    if mime_type.startswith("application/vnd.google-apps."):
+        request = service.files().export_media(fileId=file_id, mimeType="text/plain")
+    else:
+        request = service.files().get_media(fileId=file_id)
+
     content = request.execute()
     return content.decode("utf-8") if isinstance(content, bytes) else content
+
+
+def fetch_profile(service) -> str:
+    return _read_file(service, os.environ["GDRIVE_FILE_ID"])
 
 
 def create_drive_file(service, name: str, content: str) -> str:
@@ -184,8 +199,11 @@ def main():
 
     # 6. Drain Telegram backlog
     print("\n[5/5] Draining existing Telegram update backlog...")
-    drained = drain_telegram_updates()
-    print(f"      Drained {drained} pending update(s).")
+    if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"):
+        drained = drain_telegram_updates()
+        print(f"      Drained {drained} pending update(s).")
+    else:
+        print("      Skipping: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set.")
 
     # 7. Done - print what to do next
     print("\n=== Setup Complete ===\n")
