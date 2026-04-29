@@ -507,12 +507,19 @@ def markdown_to_html(text: str) -> str:
 
 def send_email(brief: str) -> bool:
     try:
-        # Nuclear fix: Force replace non-breaking spaces and sanitize
-        clean_brief = brief.replace("\xa0", " ")
-        clean_subject = f"Weekly OS Check-in | {TODAY}".replace("\xa0", " ")
+        # Super-clean: Replace ALL non-ASCII whitespace (like \xa0, \u2007, etc) with regular spaces
+        # This regex matches any whitespace that is NOT a standard space/newline and replaces it
+        def robust_clean(text: str) -> str:
+            # Replace common non-breaking spaces and other weirdness
+            cleaned = text.replace("\xa0", " ").replace("\u2007", " ").replace("\u202f", " ")
+            # Also catch any other non-ascii whitespace
+            return re.sub(r'[^\x00-\x7F]+', lambda m: m.group(0).replace('\xa0', ' '), cleaned)
+
+        clean_brief = robust_clean(brief)
+        clean_subject = robust_clean(f"Weekly OS Check-in | {TODAY}")
         
-        sender = EMAIL_ADDRESS.strip().replace("\xa0", " ")
-        recipient = EMAIL_RECIPIENT.strip().replace("\xa0", " ")
+        sender = robust_clean(EMAIL_ADDRESS.strip())
+        recipient = robust_clean(EMAIL_RECIPIENT.strip())
 
         msg = EmailMessage()
         msg["Subject"] = clean_subject
