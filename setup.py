@@ -126,15 +126,24 @@ Be factual and specific. Do not add any headers or extra text - just the bullet 
 def seed_goals_log(profile_content: str) -> str:
     """Use Gemini to extract current goals from the profile and create the seed entry."""
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash-latest",
-        system_instruction=SEED_PROMPT,
-    )
-    response = model.generate_content(
-        f"Here is my profile:\n\n{profile_content}"
-    )
-    goal_bullets = response.text.strip()
-    return f"### Initial Seed: {TODAY_DATE}\n{goal_bullets}\n"
+    
+    last_err = None
+    for m_name in ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.0-pro"]:
+        try:
+            model = genai.GenerativeModel(
+                model_name=m_name,
+                system_instruction=SEED_PROMPT,
+            )
+            response = model.generate_content(
+                f"Here is my profile:\n\n{profile_content}"
+            )
+            goal_bullets = response.text.strip()
+            return f"### Initial Seed: {TODAY_DATE}\n{goal_bullets}\n"
+        except Exception as e:
+            print(f"      Seeding failed with {m_name}, trying next...")
+            last_err = e
+            
+    raise RuntimeError(f"All models failed for seeding. Last error: {last_err}")
 
 
 # ── Telegram ──────────────────────────────────────────────────────────────────

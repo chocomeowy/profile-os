@@ -424,9 +424,9 @@ def generate_brief(
     replies: list[str],
     goals_log: str,
     staleness_warning: str | None,
-    model,
+    api_key: str,
 ) -> str:
-    """Build the full prompt context and call Gemini."""
+    """Build the full prompt context and call Gemini with fallback models."""
     parts = [f"Today is {TODAY}.", "", "## Profile", profile_content]
 
     if staleness_warning:
@@ -440,8 +440,33 @@ def generate_brief(
     if goals_log:
         parts += ["", "## Goal History Log", goals_log]
 
-    response = model.generate_content("\n".join(parts))
-    return response.text
+    prompt_text = "\n".join(parts)
+
+    # Multi-model fallback list
+    models_to_try = [
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+        "gemini-1.0-pro"
+    ]
+
+    genai.configure(api_key=api_key)
+    last_error = None
+
+    for model_name in models_to_try:
+        try:
+            print(f"      Attempting generation with {model_name}...")
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=SYSTEM_PROMPT.replace("{date}", TODAY),
+            )
+            response = model.generate_content(prompt_text)
+            return response.text
+        except Exception as e:
+            print(f"      {model_name} failed: {e}")
+            last_error = e
+            continue
+
+    raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
 
 
 # ── Email ─────────────────────────────────────────────────────────────────────
@@ -534,20 +559,23 @@ def main():
     goals_log = fetch_goals_log(drive)
     print(f"      Loaded ({len(goals_log)} chars).")
 
-    # Step 5: Configure Gemini
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash-latest",
-        system_instruction=SYSTEM_PROMPT.replace("{date}", TODAY),
-    )
-
-    # Step 5a: Compress goals log if needed
+    # Step 5: Compress goals log if needed
     print("\n[5/7] Compressing goals log (if entries are old enough)...")
-    goals_log = compress_goals_log(goals_log, model)
+    # For compression, we'll use a simple fallback loop too
+    genai.configure(api_key=GEMINI_API_KEY)
+    compressed_ok = False
+    for m_name in ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.0-pro"]:
+        try:
+            model_for_comp = genai.GenerativeModel(model_name=m_name)
+            goals_log = compress_goals_log(goals_log, model_for_comp)
+            compressed_ok = True
+            break
+        except Exception as e:
+            print(f"      Compression failed with {m_name}, trying next...")
 
     # Step 6: Generate brief
     print("\n[6/7] Generating brief with Gemini...")
-    brief = generate_brief(profile, replies, goals_log, staleness_warning, model)
+    brief = generate_brief(profile, replies, goals_log, staleness_warning, GEMINI_API_KEY)
     print(f"      Brief generated ({len(brief)} chars).")
 
     # Step 7: Deliver
