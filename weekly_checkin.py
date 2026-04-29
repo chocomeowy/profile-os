@@ -30,15 +30,18 @@ from googleapiclient.http import MediaInMemoryUpload
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-GDRIVE_FILE_ID           = os.environ["GDRIVE_FILE_ID"]
-GDRIVE_SA_JSON           = os.environ["GDRIVE_SERVICE_ACCOUNT_JSON"]
-GDRIVE_GOALS_LOG_FILE_ID = os.environ.get("GDRIVE_GOALS_LOG_FILE_ID", "")
-GEMINI_API_KEY           = os.environ["GEMINI_API_KEY"]
-TELEGRAM_BOT_TOKEN       = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID         = str(os.environ.get("TELEGRAM_CHAT_ID", ""))
-EMAIL_ADDRESS            = os.environ["EMAIL_ADDRESS"]
-EMAIL_PASSWORD           = os.environ["EMAIL_PASSWORD"]
-EMAIL_RECIPIENT          = os.environ.get("EMAIL_RECIPIENT", EMAIL_ADDRESS)
+def _clean_secret(v: str) -> str:
+    return v.strip().replace("\xa0", " ") if v else v
+
+GDRIVE_FILE_ID           = _clean_secret(os.environ.get("GDRIVE_FILE_ID", ""))
+GDRIVE_SA_JSON           = os.environ.get("GDRIVE_SERVICE_ACCOUNT_JSON", "")
+GDRIVE_GOALS_LOG_FILE_ID = _clean_secret(os.environ.get("GDRIVE_GOALS_LOG_FILE_ID", ""))
+GEMINI_API_KEY           = _clean_secret(os.environ.get("GEMINI_API_KEY", ""))
+TELEGRAM_BOT_TOKEN       = _clean_secret(os.environ.get("TELEGRAM_BOT_TOKEN", ""))
+TELEGRAM_CHAT_ID         = _clean_secret(str(os.environ.get("TELEGRAM_CHAT_ID", "")))
+EMAIL_ADDRESS            = _clean_secret(os.environ.get("EMAIL_ADDRESS", ""))
+EMAIL_PASSWORD           = _clean_secret(os.environ.get("EMAIL_PASSWORD", ""))
+EMAIL_RECIPIENT          = _clean_secret(os.environ.get("EMAIL_RECIPIENT", EMAIL_ADDRESS))
 
 NOW_UTC    = datetime.now(timezone.utc)
 TODAY      = NOW_UTC.strftime("%A, %d %B %Y")
@@ -566,7 +569,31 @@ def send_email(brief: str) -> bool:
 
 def main():
     validate_env()
-    print(f"[Weekly OS] Starting check-in for {TODAY}")
+    
+    # --- Diagnostics: Check for hidden characters in secrets ---
+    print("\n[Diagnostic] Checking secrets for hidden characters...")
+    secrets_to_check = {
+        "EMAIL_ADDRESS": EMAIL_ADDRESS,
+        "EMAIL_RECIPIENT": EMAIL_RECIPIENT,
+        "EMAIL_PASSWORD": EMAIL_PASSWORD,
+        "GDRIVE_FILE_ID": GDRIVE_FILE_ID,
+    }
+    for name, value in secrets_to_check.items():
+        for i, char in enumerate(value):
+            if ord(char) >= 128:
+                print(f"      WARNING: Found non-ASCII char {repr(char)} (ord {ord(char)}) in {name} at position {i}")
+    
+    # --- Diagnostics: List available models ---
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        print("\n[Diagnostic] Available Gemini models:")
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                print(f"      - {m.name}")
+    except Exception as e:
+        print(f"      Could not list models: {e}")
+
+    print(f"\n[Weekly OS] Starting check-in for {TODAY}")
 
     # Step 0: Read Telegram replies from the past 7 days
     replies = []
