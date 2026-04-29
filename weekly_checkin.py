@@ -534,11 +534,32 @@ def send_email(brief: str) -> bool:
 
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(sender, EMAIL_PASSWORD)
-            server.send_message(msg)
+            # Use raw sendmail with bytes to avoid any internal string-to-ascii conversions
+            server.sendmail(sender, [recipient], msg.as_bytes())
         return True
     except Exception as e:
         print(f"[Email] Failed: {e}")
-        return False
+        # Final desperate attempt: strip all non-ascii and try once more
+        try:
+            print("      Attempting ASCII-only fallback...")
+            sender = "".join(c for c in EMAIL_ADDRESS if ord(c) < 128)
+            recipient = "".join(c for c in EMAIL_RECIPIENT if ord(c) < 128)
+            safe_brief = "".join(c for c in brief if ord(c) < 128)
+            safe_subject = "".join(c for c in f"Weekly OS Check-in | {TODAY}" if ord(c) < 128)
+            
+            msg = EmailMessage()
+            msg["Subject"] = safe_subject
+            msg["From"] = sender
+            msg["To"] = recipient
+            msg.set_content(safe_brief)
+            
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                server.login(sender, EMAIL_PASSWORD)
+                server.send_message(msg)
+            return True
+        except Exception as e2:
+            print(f"      Desperate fallback also failed: {e2}")
+            return False
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
