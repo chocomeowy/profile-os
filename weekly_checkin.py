@@ -444,9 +444,10 @@ def generate_brief(
 
     # Multi-model fallback list
     models_to_try = [
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash-lite",
         "gemini-1.5-flash",
-        "gemini-1.5-flash-8b",
-        "gemini-1.0-pro"
+        "gemini-1.5-flash-8b"
     ]
 
     genai.configure(api_key=api_key)
@@ -564,7 +565,7 @@ def main():
     # For compression, we'll use a simple fallback loop too
     genai.configure(api_key=GEMINI_API_KEY)
     compressed_ok = False
-    for m_name in ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.0-pro"]:
+    for m_name in ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-1.5-flash"]:
         try:
             model_for_comp = genai.GenerativeModel(model_name=m_name)
             goals_log = compress_goals_log(goals_log, model_for_comp)

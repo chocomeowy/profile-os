@@ -128,7 +128,8 @@ def seed_goals_log(profile_content: str) -> str:
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
     
     last_err = None
-    for m_name in ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.0-pro"]:
+    models_to_try = ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-1.5-flash"]
+    for m_name in models_to_try:
         try:
             model = genai.GenerativeModel(
                 model_name=m_name,
