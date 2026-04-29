@@ -511,8 +511,8 @@ def send_email(brief: str) -> bool:
         msg["Subject"] = f"Weekly OS Check-in | {TODAY}"
         msg["From"]    = EMAIL_ADDRESS
         msg["To"]      = EMAIL_RECIPIENT
-        msg.attach(MIMEText(brief, "plain"))
-        msg.attach(MIMEText(markdown_to_html(brief), "html"))
+        msg.attach(MIMEText(brief, "plain", "utf-8"))
+        msg.attach(MIMEText(markdown_to_html(brief), "html", "utf-8"))
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             server.sendmail(EMAIL_ADDRESS, EMAIL_RECIPIENT, msg.as_string())
