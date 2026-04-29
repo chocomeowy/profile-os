@@ -151,16 +151,17 @@ def check_profile_staleness(profile_content: str) -> str | None:
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
 
-def fetch_telegram_replies() -> tuple[list[str], int]:
+def fetch_telegram_replies() -> tuple[list[str], int, int]:
     """
     Fetch all pending Telegram updates. Filter to messages from TELEGRAM_CHAT_ID
-    in the past 7 days. Returns (list of '[timestamp] text' strings, max update_id).
+    in the past 7 days. Returns (list of '[timestamp] text' strings, total_updates, max update_id).
     """
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
     cutoff = NOW_UTC - timedelta(days=7)
     messages: list[str] = []
     max_update_id = 0
     offset = 0
+    total_updates = 0
 
     while True:
         params: dict = {"timeout": 0, "limit": 100}
@@ -177,6 +178,7 @@ def fetch_telegram_replies() -> tuple[list[str], int]:
             break
 
         updates = data["result"]
+        total_updates += len(updates)
         for update in updates:
             uid = update["update_id"]
             max_update_id = max(max_update_id, uid)
@@ -200,7 +202,7 @@ def fetch_telegram_replies() -> tuple[list[str], int]:
             break
         offset = max_update_id + 1
 
-    return messages, max_update_id
+    return messages, total_updates, max_update_id
 
 
 def acknowledge_telegram_updates(max_update_id: int) -> None:
@@ -359,19 +361,13 @@ def append_goals_entry(log_content: str, goal_status_section: str) -> str:
 
 
 def extract_goal_status_section(brief: str) -> str:
-    """Extract the ### Goal Status This Week section from the generated brief."""
-    lines = brief.splitlines()
-    in_section = False
-    result: list[str] = []
-    for line in lines:
-        if line.strip().startswith("### Goal Status This Week"):
-            in_section = True
-            continue
-        if in_section:
-            if line.startswith("##"):
-                break
-            result.append(line)
-    return "\n".join(result).strip()
+    """Extract the ### Goal Status This Week section from the generated brief (case-insensitive)."""
+    # Use regex to find the section between the header and the next ## header or end of file
+    pattern = r"### Goal Status This Week\s*(.*?)(?=\n##|$)"
+    match = re.search(pattern, brief, re.DOTALL | re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return ""
 
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
@@ -573,11 +569,14 @@ def main():
 
     # Step 0: Read Telegram replies from the past 7 days
     replies = []
+    total_updates = 0
     max_update_id = 0
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         print("\n[0/7] Reading Telegram replies from the past 7 days...")
-        replies, max_update_id = fetch_telegram_replies()
-        print(f"      {len(replies)} message(s) found.")
+        replies, total_updates, max_update_id = fetch_telegram_replies()
+        print(f"      {len(replies)} relevant message(s) found.")
+        if total_updates > len(replies):
+            print(f"      (Note: {total_updates - len(replies)} update(s) were skipped/filtered).")
     else:
         print("\n[0/7] Skipping Telegram replies (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set).")
 
@@ -640,10 +639,19 @@ def main():
             raise RuntimeError("Email delivery failed.")
 
     # Post-send: acknowledge Telegram updates + append to goals log
-    acknowledge_telegram_updates(max_update_id)
+    if max_update_id > 0:
+        acknowledge_telegram_updates(max_update_id)
 
     goal_status = extract_goal_status_section(brief)
-    if goal_status and GDRIVE_GOALS_LOG_FILE_ID:
+    if not GDRIVE_GOALS_LOG_FILE_ID:
+        print("\n[!] Skipping goals log update: GDRIVE_GOALS_LOG_FILE_ID not configured.")
+    elif not goal_status:
+        print("\n[!] Skipping goals log update: '### Goal Status This Week' section not found in brief.")
+        # Debug: Print first few lines of brief to see headers
+        print("    Brief starts with:")
+        for line in brief.splitlines()[:10]:
+            print(f"      {line}")
+    else:
         print("\n[+] Appending goal status to goals log...")
         updated_log = append_goals_entry(goals_log, goal_status)
         write_goals_log(drive, updated_log)
