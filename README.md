@@ -25,6 +25,11 @@ Every Sunday at 8am SGT, it:
 7. Delivers to Telegram and email
 8. Clears processed Telegram messages and appends this week's goal status to the log
 
+Every day at 9am SGT, it:
+1. Fetches your `profile.md` from Google Drive
+2. Uses Gemini to generate a relevant, context-aware nudge or question based on your goals
+3. Sends it to your Telegram to prompt you for a quick update
+
 ---
 
 ## Setup (one-time)
@@ -120,7 +125,14 @@ Check your Telegram and email. Check `goals_log.md` on Drive for the first appen
 
 ## How to use it during the week
 
-Send any free-text messages to your Telegram bot throughout the week.
+### 1. Daily Prompts (Auto)
+Every morning at 9am SGT, your bot will send you a personalized nudge. 
+- It reads your `profile.md` to see what's actually important to you.
+- It picks a specific goal or habit and asks for a status update.
+- Just reply to the bot—your response is saved and will be part of Sunday's brief.
+
+### 2. Free-text Notes (Manual)
+Send any free-text messages to your Telegram bot anytime.
 Examples:
 - `3 workouts done, diet clean, skipped fish twice`
 - `Applied to 6 jobs this week, got one callback from GXS`
@@ -184,7 +196,8 @@ profile-os/
   requirements.txt                python dependencies
   .github/
     workflows/
-      weekly.yml                  cron schedule and job definition
+      weekly.yml                  cron schedule for weekly brief
+      daily.yml                   cron schedule for daily prompts
   README.md                       this file
 ```
 
