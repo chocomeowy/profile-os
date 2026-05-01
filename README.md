@@ -1,5 +1,7 @@
 # Weekly OS
 
+Just made this public on 1st May Labour day. It runs on github actions and make your own AI life updates from a markdown file from google drive. I recommend creating a separate google drive and giving it the JSON token to try it out. 
+
 A personal operating system check-in that runs every Sunday.
 
 Reads your `profile.md` from Google Drive, sends it to Gemini for reasoning,
