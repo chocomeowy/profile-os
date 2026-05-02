@@ -446,6 +446,7 @@ def generate_brief(
         "gemini-3.1-flash-lite-preview",
         "gemini-2.5-flash-lite",
         "gemini-2.0-flash-lite",
+        "gemini-1.5-flash-8b",
         "gemini-1.5-flash"
     ]
 
@@ -607,7 +608,7 @@ def main():
     # For compression, we'll use a simple fallback loop too
     genai.configure(api_key=GEMINI_API_KEY)
     compressed_ok = False
-    for m_name in ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "gemini-1.5-flash"]:
+    for m_name in ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-1.5-flash"]:
         try:
             model_for_comp = genai.GenerativeModel(model_name=m_name)
             goals_log = compress_goals_log(goals_log, model_for_comp)

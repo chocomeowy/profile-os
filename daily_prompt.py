@@ -98,14 +98,19 @@ Rules:
 def generate_prompt(profile_content: str, api_key: str) -> str:
     genai.configure(api_key=api_key)
     models_to_try = [
+        "gemini-3.1-flash-lite-preview",
         "gemini-2.0-flash-lite",
-        "gemini-1.5-flash"
+        "gemini-1.5-flash-8b",
+        "gemini-1.5-flash",
+        "gemini-2.0-flash-exp",
     ]
     
     prompt_text = f"Today is {TODAY}.\n\n## User Profile\n{profile_content}"
     
+    last_error = None
     for model_name in models_to_try:
         try:
+            print(f"      Attempting generation with {model_name}...")
             model = genai.GenerativeModel(
                 model_name=model_name,
                 system_instruction=SYSTEM_PROMPT,
@@ -114,9 +119,10 @@ def generate_prompt(profile_content: str, api_key: str) -> str:
             return response.text.strip()
         except Exception as e:
             print(f"      {model_name} failed: {e}")
+            last_error = e
             continue
             
-    raise RuntimeError("All Gemini models failed to generate daily prompt.")
+    raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
