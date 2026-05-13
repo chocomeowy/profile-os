@@ -6,6 +6,7 @@ then sends a weekly brief to Telegram and email.
 
 New in this version:
   - Reads your Telegram messages from the past 7 days as context
+  - Folds Telegram replies into profile.md before generating the weekly brief
   - Warns if your profile.md hasn't been updated in 14+ days
   - Maintains a goals_log.md on Drive with auto-compression at 30 days and 1 year
 """
@@ -67,8 +68,7 @@ def validate_env() -> None:
         sys.exit(1)
 
 DRIVE_SCOPES = [
-    "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/drive.file",
+    "https://www.googleapis.com/auth/drive",
 ]
 
 
@@ -129,6 +129,10 @@ def write_goals_log(service, content: str) -> None:
         _write_file(service, GDRIVE_GOALS_LOG_FILE_ID, content)
     except Exception as e:
         print(f"[Goals Log] Write failed: {e}")
+
+
+def write_profile(service, content: str) -> None:
+    _write_file(service, GDRIVE_FILE_ID, content)
 
 
 # ── Staleness Check ───────────────────────────────────────────────────────────
@@ -320,6 +324,29 @@ def extract_goal_status_section(brief: str) -> str:
 
 # ── Gemini ────────────────────────────────────────────────────────────────────
 
+PROFILE_UPDATE_PROMPT = """\
+You update a user's personal operating system profile markdown before the weekly brief is generated.
+
+Inputs:
+- The current profile markdown
+- Telegram replies from the past week
+- Deterministic interpreted signals from those replies
+
+Return the complete updated profile markdown only. No commentary. No code fences.
+
+Rules:
+- Preserve the user's existing markdown structure and wording as much as possible.
+- Treat Telegram replies as factual status updates, even if terse.
+- Update "Last updated:" to {date} if it exists.
+- Fold durable status into the most relevant existing section: active goals, personal goals, learning, job search, health, or notes.
+- For job-search replies, record both applications submitted and any HR calls/interviews scheduled.
+- For learning replies, record module progress such as finance/ML or unsupervised ML.
+- For health replies, update only the specific habit mentioned.
+- Do not invent numbers, companies, dates, or outcomes not present in the replies.
+- Do not remove unrelated profile content.
+- If no existing section fits, add a short "## Latest Weekly Updates" section near the end.
+"""
+
 SYSTEM_PROMPT = """\
 You are a sharp, direct personal operating system assistant.
 You receive a personal profile, today's date, any Telegram notes from the past week,
@@ -367,6 +394,78 @@ Rules:
 - If the user reports applications, HR calls, interviews, or a module starting, reflect that as current pipeline/learning status.
 - If a section has nothing actionable, say so in one line and move on.
 """
+
+
+def _strip_markdown_fence(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:markdown|md)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    return cleaned.strip() + "\n"
+
+
+def _looks_like_profile_update(original: str, updated: str) -> bool:
+    if not updated.strip():
+        return False
+    if len(updated) < max(200, int(len(original) * 0.5)):
+        return False
+    original_headers = re.findall(r"^#{1,3}\s+.+$", original, flags=re.MULTILINE)
+    kept_headers = sum(1 for header in original_headers if header in updated)
+    if original_headers and kept_headers < max(1, len(original_headers) // 2):
+        return False
+    return True
+
+
+def update_profile_from_replies(
+    profile_content: str,
+    replies: list[str],
+    api_key: str,
+) -> str:
+    """Fold weekly Telegram replies into profile.md before generating the brief."""
+    if not replies:
+        return profile_content
+
+    reply_signals = summarize_reply_signals(replies)
+    parts = [
+        f"Today is {TODAY}.",
+        "",
+        "## Current Profile Markdown",
+        profile_content,
+    ]
+    if reply_signals:
+        parts += ["", "## Interpreted Reply Signals", *[f"- {s}" for s in reply_signals]]
+    parts += ["", "## Telegram Replies This Week", *replies]
+
+    prompt_text = "\n".join(parts)
+    models_to_try = [
+        "gemini-3.1-flash-lite-preview",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash-8b",
+        "gemini-1.5-flash",
+    ]
+
+    genai.configure(api_key=api_key)
+    last_error = None
+
+    for model_name in models_to_try:
+        try:
+            print(f"      Attempting profile update with {model_name}...")
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=PROFILE_UPDATE_PROMPT.replace("{date}", TODAY_DATE.isoformat()),
+            )
+            response = model.generate_content(prompt_text)
+            updated = _strip_markdown_fence(response.text)
+            if _looks_like_profile_update(profile_content, updated):
+                return updated
+            raise ValueError("profile update did not look like a complete profile markdown")
+        except Exception as e:
+            print(f"      {model_name} profile update failed: {e}")
+            last_error = e
+            continue
+
+    raise RuntimeError(f"All Gemini profile update models failed. Last error: {last_error}")
 
 
 def generate_brief(
@@ -549,21 +648,34 @@ def main():
     profile = fetch_profile(drive)
     print(f"      Loaded ({len(profile)} chars).")
 
-    # Step 3: Staleness check
-    print("\n[3/7] Checking profile freshness...")
+    # Step 3: Fold Telegram replies into profile.md before generating the brief
+    print("\n[3/8] Updating profile.md from Telegram replies...")
+    if replies:
+        updated_profile = update_profile_from_replies(profile, replies, GEMINI_API_KEY)
+        if updated_profile != profile:
+            write_profile(drive, updated_profile)
+            profile = updated_profile
+            print(f"      Profile updated and saved ({len(profile)} chars).")
+        else:
+            print("      No profile changes needed.")
+    else:
+        print("      No replies to fold into profile.")
+
+    # Step 4: Staleness check
+    print("\n[4/8] Checking profile freshness...")
     staleness_warning = check_profile_staleness(profile)
     if staleness_warning:
         print(f"      Warning: {staleness_warning}")
     else:
         print("      Profile is current.")
 
-    # Step 4: Fetch goals log
-    print("\n[4/7] Fetching goals log...")
+    # Step 5: Fetch goals log
+    print("\n[5/8] Fetching goals log...")
     goals_log = fetch_goals_log(drive)
     print(f"      Loaded ({len(goals_log)} chars).")
 
-    # Step 5: Compress goals log if needed
-    print("\n[5/7] Compressing goals log (if entries are old enough)...")
+    # Step 6: Compress goals log if needed
+    print("\n[6/8] Compressing goals log (if entries are old enough)...")
     # For compression, we'll use a simple fallback loop too
     genai.configure(api_key=GEMINI_API_KEY)
     compressed_ok = False
@@ -576,13 +688,13 @@ def main():
         except Exception as e:
             print(f"      Compression failed with {m_name}, trying next...")
 
-    # Step 6: Generate brief
-    print("\n[6/7] Generating brief with Gemini...")
+    # Step 7: Generate brief
+    print("\n[7/8] Generating brief with Gemini...")
     brief = generate_brief(profile, replies, goals_log, staleness_warning, GEMINI_API_KEY)
     print(f"      Brief generated ({len(brief)} chars).")
 
-    # Step 7: Deliver
-    print("\n[7/7] Sending brief...")
+    # Step 8: Deliver
+    print("\n[8/8] Sending brief...")
     tg_ok = False
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         tg_ok = send_telegram(brief)

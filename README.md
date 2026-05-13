@@ -20,12 +20,13 @@ What makes it useful:
 Every Sunday at 8am SGT, it:
 1. Reads your Telegram messages from the past 7 days (free-text notes you sent to your bot)
 2. Fetches your `profile.md` from Google Drive
-3. Warns if your profile is stale (> 14 days since last update)
-4. Reads your `goals_log.md` from Drive for historical context
-5. Compresses old log entries (monthly at 30 days, yearly at 1 year) via Gemini
-6. Sends everything to Gemini and generates a structured brief
-7. Delivers to Telegram and email
-8. Clears processed Telegram messages and appends this week's goal status to the log
+3. Updates `profile.md` from those Telegram replies
+4. Warns if your profile is stale (> 14 days since last update)
+5. Reads your `goals_log.md` from Drive for historical context
+6. Compresses old log entries (monthly at 30 days, yearly at 1 year) via Gemini
+7. Sends the updated profile and context to Gemini and generates a structured brief
+8. Delivers to Telegram and email
+9. Clears processed Telegram messages and appends this week's goal status to the log
 
 Every day at 9am SGT, it:
 1. Fetches your `profile.md` from Google Drive
@@ -58,7 +59,7 @@ Edit it on your phone anytime via the Google Drive app.
 5. Name it anything (e.g. `weekly-os`)
 6. No roles needed
 7. Create a JSON key and download it
-8. Open your `profile.md` in Drive, click Share, share with the service account email (looks like `name@project.iam.gserviceaccount.com`) with Viewer access
+8. Open your `profile.md` in Drive, click Share, share with the service account email (looks like `name@project.iam.gserviceaccount.com`) with Editor access
 
 ### Step 4: Get a Gemini API key
 
@@ -133,7 +134,7 @@ Every morning at 9am SGT, your bot will send you a personalized nudge.
 - It reads your `profile.md` to see what's actually important to you.
 - It also reads recent replies, so it can shift from "did you apply?" to interview prep or follow-up once you have already replied.
 - It picks a specific goal or habit that still needs attention and asks for a status update.
-- Just reply to the bot—your response is saved and will be part of Sunday's brief.
+- Just reply to the bot. On Sunday, your response is folded into `profile.md` before the weekly brief is generated.
 
 ### 2. Free-text Notes (Manual)
 Send any free-text messages to your Telegram bot anytime.
@@ -142,8 +143,9 @@ Examples:
 - `Applied to 6 jobs this week, got one callback from GXS`
 - `Missed sleep deadline 3 nights, need to fix this`
 
-The next Sunday brief will read these notes and reference them directly in the Health,
-Goals, and Focus sections. After the brief is sent, those messages are cleared.
+The next Sunday run will first update `profile.md` from these notes, then use the
+updated profile for the Health, Goals, and Focus sections. After the brief is sent,
+those messages are cleared.
 
 ---
 
