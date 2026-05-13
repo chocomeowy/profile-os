@@ -29,8 +29,9 @@ Every Sunday at 8am SGT, it:
 
 Every day at 9am SGT, it:
 1. Fetches your `profile.md` from Google Drive
-2. Uses Gemini to generate a relevant, context-aware nudge or question based on your goals
-3. Sends it to your Telegram to prompt you for a quick update
+2. Reads pending Telegram replies for recent context without clearing them
+3. Uses Gemini to generate a relevant nudge that avoids already-answered questions
+4. Sends it to your Telegram to prompt you for a quick update
 
 ---
 
@@ -130,7 +131,8 @@ Check your Telegram and email. Check `goals_log.md` on Drive for the first appen
 ### 1. Daily Prompts (Auto)
 Every morning at 9am SGT, your bot will send you a personalized nudge. 
 - It reads your `profile.md` to see what's actually important to you.
-- It picks a specific goal or habit and asks for a status update.
+- It also reads recent replies, so it can shift from "did you apply?" to interview prep or follow-up once you have already replied.
+- It picks a specific goal or habit that still needs attention and asks for a status update.
 - Just reply to the bot—your response is saved and will be part of Sunday's brief.
 
 ### 2. Free-text Notes (Manual)

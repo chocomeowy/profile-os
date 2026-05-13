@@ -14,6 +14,8 @@ import google.generativeai as genai
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
+from telegram_context import fetch_recent_telegram_notes, summarize_reply_signals
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 def _clean_secret(v: str) -> str:
@@ -88,14 +90,18 @@ to help them stay on track with their goals and habits.
 
 Rules:
 1. Read the user's profile.
-2. Pick ONE specific goal or habit that seems relevant today.
-3. Generate a single question or encouraging nudge (max 200 characters).
-4. Be direct but friendly. No "AI assistant" filler. 
-5. Use a casual, supportive tone.
-6. If it's a weekend, you can be slightly more reflective. If it's a weekday, be more action-oriented.
+2. Read recent Telegram replies as ground-truth status updates.
+3. Pick ONE specific goal or habit that still needs attention today.
+4. Do not repeat a question that recent replies already answered.
+5. If job applications were already reported, shift to next useful step such as interview prep, follow-up, or learning priority.
+6. If the user reported HR calls/interviews scheduled, acknowledge the pipeline and ask about preparation, not whether applications were sent.
+7. Generate a single question or encouraging nudge (max 200 characters).
+8. Be direct but friendly. No "AI assistant" filler. 
+9. Use a casual, supportive tone.
+10. If it's a weekend, you can be slightly more reflective. If it's a weekday, be more action-oriented.
 """
 
-def generate_prompt(profile_content: str, api_key: str) -> str:
+def generate_prompt(profile_content: str, recent_replies: list[str], api_key: str) -> str:
     genai.configure(api_key=api_key)
     models_to_try = [
         "gemini-3.1-flash-lite-preview",
@@ -105,7 +111,21 @@ def generate_prompt(profile_content: str, api_key: str) -> str:
         "gemini-2.0-flash-exp",
     ]
     
-    prompt_text = f"Today is {TODAY}.\n\n## User Profile\n{profile_content}"
+    parts = [f"Today is {TODAY}.", "", "## User Profile", profile_content]
+    if recent_replies:
+        reply_signals = summarize_reply_signals(recent_replies)
+        if reply_signals:
+            parts += ["", "## Interpreted Recent Telegram Signals", *[f"- {s}" for s in reply_signals]]
+        parts += [
+            "",
+            "## Recent Telegram Replies",
+            "Use these replies to avoid stale or already-answered nudges.",
+            *recent_replies,
+        ]
+    else:
+        parts += ["", "## Recent Telegram Replies", "No recent replies are pending."]
+
+    prompt_text = "\n".join(parts)
     
     last_error = None
     for model_name in models_to_try:
@@ -132,8 +152,18 @@ def main():
     
     drive = build_drive_service()
     profile = fetch_profile(drive)
+    replies, total_updates, _ = fetch_recent_telegram_notes(
+        TELEGRAM_BOT_TOKEN,
+        TELEGRAM_CHAT_ID,
+        NOW_UTC,
+        days=7,
+        acknowledge=False,
+    )
+    print(f"      Recent Telegram replies found: {len(replies)}")
+    if total_updates > len(replies):
+        print(f"      (Note: {total_updates - len(replies)} update(s) were skipped/filtered).")
     
-    nudge = generate_prompt(profile, GEMINI_API_KEY)
+    nudge = generate_prompt(profile, replies, GEMINI_API_KEY)
     print(f"      Nudge generated: {nudge}")
     
     if send_telegram(nudge):

@@ -27,6 +27,8 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaInMemoryUpload
 
+from telegram_context import acknowledge_telegram_updates, fetch_recent_telegram_notes, summarize_reply_signals
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -156,67 +158,13 @@ def fetch_telegram_replies() -> tuple[list[str], int, int]:
     Fetch all pending Telegram updates. Filter to messages from TELEGRAM_CHAT_ID
     in the past 7 days. Returns (list of '[timestamp] text' strings, total_updates, max update_id).
     """
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
-    cutoff = NOW_UTC - timedelta(days=7)
-    messages: list[str] = []
-    max_update_id = 0
-    offset = 0
-    total_updates = 0
-
-    while True:
-        params: dict = {"timeout": 0, "limit": 100}
-        if offset:
-            params["offset"] = offset
-        try:
-            resp = requests.get(url, params=params, timeout=15)
-            data = resp.json()
-        except Exception as e:
-            print(f"[Telegram] getUpdates error: {e}")
-            break
-
-        if not data.get("ok") or not data.get("result"):
-            break
-
-        updates = data["result"]
-        total_updates += len(updates)
-        for update in updates:
-            uid = update["update_id"]
-            max_update_id = max(max_update_id, uid)
-
-            msg = update.get("message") or update.get("edited_message")
-            if not msg:
-                continue
-            if str(msg.get("chat", {}).get("id", "")) != TELEGRAM_CHAT_ID:
-                continue
-
-            msg_dt = datetime.fromtimestamp(msg["date"], tz=timezone.utc)
-            if msg_dt < cutoff:
-                continue
-
-            text = msg.get("text", "").strip()
-            if text:
-                ts = msg_dt.strftime("%Y-%m-%d %H:%M")
-                messages.append(f"[{ts}] {text}")
-
-        if len(updates) < 100:
-            break
-        offset = max_update_id + 1
-
-    return messages, total_updates, max_update_id
-
-
-def acknowledge_telegram_updates(max_update_id: int) -> None:
-    """Advance the Telegram offset to clear all processed updates."""
-    if max_update_id == 0:
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
-    try:
-        requests.get(
-            url, params={"offset": max_update_id + 1, "timeout": 0}, timeout=15
-        )
-        print(f"[Telegram] Acknowledged updates up to {max_update_id}.")
-    except Exception as e:
-        print(f"[Telegram] Acknowledge failed: {e}")
+    return fetch_recent_telegram_notes(
+        TELEGRAM_BOT_TOKEN,
+        TELEGRAM_CHAT_ID,
+        NOW_UTC,
+        days=7,
+        acknowledge=False,
+    )
 
 
 def send_telegram(message: str) -> bool:
@@ -414,6 +362,9 @@ Rules:
 - Be direct. No filler like "Great job" or "Remember to".
 - No em dashes. Use plain dashes or colons.
 - Reference specific numbers or rules from the profile when relevant.
+- Treat Telegram notes as ground-truth status updates, even if terse.
+- Do not ask whether a goal was started if the notes already show progress.
+- If the user reports applications, HR calls, interviews, or a module starting, reflect that as current pipeline/learning status.
 - If a section has nothing actionable, say so in one line and move on.
 """
 
@@ -432,7 +383,15 @@ def generate_brief(
         parts += ["", f"**{staleness_warning}**"]
 
     if replies:
-        parts += ["", "## Your Notes This Week (Telegram)", *replies]
+        reply_signals = summarize_reply_signals(replies)
+        if reply_signals:
+            parts += ["", "## Interpreted Signals From Telegram", *[f"- {s}" for s in reply_signals]]
+        parts += [
+            "",
+            "## Your Notes This Week (Telegram)",
+            "Use these as factual status updates. Do not ignore terse confirmations like 'yup' or 'applied more'.",
+            *replies,
+        ]
     else:
         parts += ["", "## Your Notes This Week", "No notes logged this week."]
 
@@ -641,7 +600,7 @@ def main():
 
     # Post-send: acknowledge Telegram updates + append to goals log
     if max_update_id > 0:
-        acknowledge_telegram_updates(max_update_id)
+        acknowledge_telegram_updates(TELEGRAM_BOT_TOKEN, max_update_id)
 
     goal_status = extract_goal_status_section(brief)
     if not GDRIVE_GOALS_LOG_FILE_ID:
