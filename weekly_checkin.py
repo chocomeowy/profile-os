@@ -29,7 +29,9 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaInMemoryUpload
 
 from telegram_context import acknowledge_telegram_updates, fetch_recent_telegram_notes, summarize_reply_signals
-
+from drive_context import build_drive_service, read_drive_file, write_drive_file
+from llm_context import generate_with_fallback
+import markdown
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -74,65 +76,28 @@ DRIVE_SCOPES = [
 
 # ── Google Drive ──────────────────────────────────────────────────────────────
 
-def build_drive_service():
-    """Build and return an authenticated Google Drive service client."""
-    sa_info = json.loads(GDRIVE_SA_JSON)
-    creds = service_account.Credentials.from_service_account_info(
-        sa_info, scopes=DRIVE_SCOPES
-    )
-    return build("drive", "v3", credentials=creds)
-
-
-def _read_file(service, file_id: str) -> str:
-    """Read a file's content from Drive. Handles both regular files and Google Docs."""
-    if not file_id or not file_id.strip():
-        raise ValueError("Google Drive file ID is missing or empty.")
-
-    # First, check the mimeType
-    file_metadata = service.files().get(fileId=file_id, fields="mimeType").execute()
-    mime_type = file_metadata.get("mimeType", "")
-
-    if mime_type.startswith("application/vnd.google-apps."):
-        # It's a Google Doc/Sheet/etc. - we must export it
-        request = service.files().export_media(fileId=file_id, mimeType="text/plain")
-    else:
-        # It's a regular file - download directly
-        request = service.files().get_media(fileId=file_id)
-
-    content = request.execute()
-    return content.decode("utf-8") if isinstance(content, bytes) else content
-
-
-def _write_file(service, file_id: str, content: str) -> None:
-    media = MediaInMemoryUpload(content.encode("utf-8"), mimetype="text/plain")
-    service.files().update(fileId=file_id, media_body=media).execute()
-
-
 def fetch_profile(service) -> str:
-    return _read_file(service, GDRIVE_FILE_ID)
-
+    return read_drive_file(service, GDRIVE_FILE_ID)
 
 def fetch_goals_log(service) -> str:
     if not GDRIVE_GOALS_LOG_FILE_ID:
         return ""
     try:
-        return _read_file(service, GDRIVE_GOALS_LOG_FILE_ID)
+        return read_drive_file(service, GDRIVE_GOALS_LOG_FILE_ID)
     except Exception as e:
         print(f"[Goals Log] Fetch failed: {e}")
         return ""
-
 
 def write_goals_log(service, content: str) -> None:
     if not GDRIVE_GOALS_LOG_FILE_ID:
         return
     try:
-        _write_file(service, GDRIVE_GOALS_LOG_FILE_ID, content)
+        write_drive_file(service, GDRIVE_GOALS_LOG_FILE_ID, content)
     except Exception as e:
         print(f"[Goals Log] Write failed: {e}")
 
-
 def write_profile(service, content: str) -> None:
-    _write_file(service, GDRIVE_FILE_ID, content)
+    write_drive_file(service, GDRIVE_FILE_ID, content)
 
 
 # ── Staleness Check ───────────────────────────────────────────────────────────
@@ -234,7 +199,7 @@ def _parse_goals_log(log_content: str) -> list[dict]:
     return sections
 
 
-def _gemini_compress(model, entries_text: str, label: str) -> str:
+def _gemini_compress(api_key: str, entries_text: str, label: str) -> str:
     """Ask Gemini to summarise a group of log entries into one paragraph."""
     prompt = (
         f"Summarise the following goal log entries into a concise paragraph (max 5 sentences). "
@@ -242,10 +207,10 @@ def _gemini_compress(model, entries_text: str, label: str) -> str:
         f"Be direct and factual. No headers. Label context: {label}\n\n"
         f"Entries:\n{entries_text}"
     )
-    return model.generate_content(prompt).text.strip()
+    return generate_with_fallback(api_key, prompt)
 
 
-def compress_goals_log(log_content: str, model) -> str:
+def compress_goals_log(log_content: str, api_key: str) -> str:
     """
     Run tiered compression on the goals log:
       - Weekly entries older than 30 days  → Monthly Summary (via Gemini)
@@ -268,7 +233,7 @@ def compress_goals_log(log_content: str, model) -> str:
             combined = "\n".join(s["content"].strip() for s in grp_list)
             yr, mo = month_key.split("-")
             label = f"{month_name[int(mo)]} {yr}"
-            summary = _gemini_compress(model, combined, f"Monthly Summary: {label}")
+            summary = _gemini_compress(api_key, combined, f"Monthly Summary: {label}")
             from datetime import date
             new_sec = {
                 "type": "month",
@@ -288,7 +253,7 @@ def compress_goals_log(log_content: str, model) -> str:
         for yr_key, grp in groupby(old_months, key=lambda s: s["date"].strftime("%Y")):
             grp_list = list(grp)
             combined = "\n".join(s["content"].strip() for s in grp_list)
-            summary = _gemini_compress(model, combined, f"Yearly Summary: {yr_key}")
+            summary = _gemini_compress(api_key, combined, f"Yearly Summary: {yr_key}")
             from datetime import date
             new_sec = {
                 "type": "year",
@@ -437,35 +402,16 @@ def update_profile_from_replies(
     parts += ["", "## Telegram Replies This Week", *replies]
 
     prompt_text = "\n".join(parts)
-    models_to_try = [
-        "gemini-3.1-flash-lite-preview",
-        "gemini-2.5-flash-lite",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash-8b",
-        "gemini-1.5-flash",
-    ]
+    sys_prompt = PROFILE_UPDATE_PROMPT.replace("{date}", TODAY_DATE.isoformat())
 
-    genai.configure(api_key=api_key)
-    last_error = None
-
-    for model_name in models_to_try:
-        try:
-            print(f"      Attempting profile update with {model_name}...")
-            model = genai.GenerativeModel(
-                model_name=model_name,
-                system_instruction=PROFILE_UPDATE_PROMPT.replace("{date}", TODAY_DATE.isoformat()),
-            )
-            response = model.generate_content(prompt_text)
-            updated = _strip_markdown_fence(response.text)
-            if _looks_like_profile_update(profile_content, updated):
-                return updated
-            raise ValueError("profile update did not look like a complete profile markdown")
-        except Exception as e:
-            print(f"      {model_name} profile update failed: {e}")
-            last_error = e
-            continue
-
-    raise RuntimeError(f"All Gemini profile update models failed. Last error: {last_error}")
+    try:
+        response_text = generate_with_fallback(api_key, prompt_text, sys_prompt)
+        updated = _strip_markdown_fence(response_text)
+        if _looks_like_profile_update(profile_content, updated):
+            return updated
+        raise ValueError("profile update did not look like a complete profile markdown")
+    except Exception as e:
+        raise RuntimeError(f"All Gemini profile update models failed. Last error: {e}")
 
 
 def generate_brief(
@@ -498,67 +444,31 @@ def generate_brief(
         parts += ["", "## Goal History Log", goals_log]
 
     prompt_text = "\n".join(parts)
+    sys_prompt = SYSTEM_PROMPT.replace("{date}", TODAY)
 
-    # Multi-model fallback list
-    models_to_try = [
-        "gemini-3.1-flash-lite-preview",
-        "gemini-2.5-flash-lite",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash-8b",
-        "gemini-1.5-flash"
-    ]
-
-    genai.configure(api_key=api_key)
-    last_error = None
-
-    for model_name in models_to_try:
-        try:
-            print(f"      Attempting generation with {model_name}...")
-            model = genai.GenerativeModel(
-                model_name=model_name,
-                system_instruction=SYSTEM_PROMPT.replace("{date}", TODAY),
-            )
-            response = model.generate_content(prompt_text)
-            return response.text
-        except Exception as e:
-            print(f"      {model_name} failed: {e}")
-            last_error = e
-            continue
-
-    raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
+    try:
+        return generate_with_fallback(api_key, prompt_text, sys_prompt)
+    except Exception as e:
+        raise RuntimeError(f"All Gemini models failed. Last error: {e}")
 
 
 # ── Email ─────────────────────────────────────────────────────────────────────
 
 def markdown_to_html(text: str) -> str:
-    lines = text.split("\n")
-    html_lines = []
-    for line in lines:
-        if line.startswith("## "):
-            html_lines.append(
-                f"<h2 style='color:#2c3e50;border-bottom:2px solid #eee;"
-                f"padding-bottom:6px'>{line[3:]}</h2>"
-            )
-        elif line.startswith("### "):
-            html_lines.append(
-                f"<h3 style='color:#34495e;margin-top:20px'>{line[4:]}</h3>"
-            )
-        elif line.startswith("- "):
-            html_lines.append(f"<li style='margin-bottom:4px'>{line[2:]}</li>")
-        elif line.startswith("---"):
-            html_lines.append(
-                "<hr style='border:none;border-top:1px solid #eee;margin:20px 0'>"
-            )
-        elif line.strip() == "":
-            html_lines.append("<br>")
-        else:
-            html_lines.append(f"<p style='margin:4px 0'>{line}</p>")
-
-    body = "\n".join(html_lines)
+    body = markdown.markdown(text, extensions=['tables', 'fenced_code'])
     return (
-        "<html><body style='font-family:Arial,sans-serif;max-width:640px;"
-        f"margin:auto;padding:24px;color:#222'>\n{body}\n"
-        f"<br><p style='color:#aaa;font-size:12px'>Weekly OS - Generated {TODAY}</p>"
+        "<html><head><style>\n"
+        "body { font-family: Arial, sans-serif; max-width: 640px; margin: auto; padding: 24px; color: #222; }\n"
+        "h2 { color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 6px; }\n"
+        "h3 { color: #34495e; margin-top: 20px; }\n"
+        "li { margin-bottom: 6px; }\n"
+        "hr { border: none; border-top: 1px solid #eee; margin: 20px 0; }\n"
+        "p { margin: 12px 0; line-height: 1.5; }\n"
+        "pre, code { background-color: #f8f9fa; padding: 2px 4px; border-radius: 4px; }\n"
+        "pre { padding: 12px; overflow-x: auto; }\n"
+        "</style></head><body>\n"
+        f"{body}\n"
+        f"<br><p style='color:#aaa;font-size:12px'>Weekly OS - Generated {TODAY}</p>\n"
         "</body></html>"
     )
 
@@ -641,7 +551,7 @@ def main():
 
     # Step 1: Connect to Drive
     print("\n[1/7] Connecting to Google Drive...")
-    drive = build_drive_service()
+    drive = build_drive_service(GDRIVE_SA_JSON, DRIVE_SCOPES)
 
     # Step 2: Fetch profile
     print("\n[2/7] Fetching profile.md...")
@@ -676,17 +586,11 @@ def main():
 
     # Step 6: Compress goals log if needed
     print("\n[6/8] Compressing goals log (if entries are old enough)...")
-    # For compression, we'll use a simple fallback loop too
-    genai.configure(api_key=GEMINI_API_KEY)
-    compressed_ok = False
-    for m_name in ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-1.5-flash"]:
-        try:
-            model_for_comp = genai.GenerativeModel(model_name=m_name)
-            goals_log = compress_goals_log(goals_log, model_for_comp)
-            compressed_ok = True
-            break
-        except Exception as e:
-            print(f"      Compression failed with {m_name}, trying next...")
+    try:
+        goals_log = compress_goals_log(goals_log, GEMINI_API_KEY)
+        compressed_ok = True
+    except Exception as e:
+        print(f"      Compression failed: {e}")
 
     # Step 7: Generate brief
     print("\n[7/8] Generating brief with Gemini...")

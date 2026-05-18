@@ -31,6 +31,9 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaInMemoryUpload
 
+from drive_context import build_drive_service, read_drive_file
+from llm_context import generate_with_fallback
+
 from datetime import datetime, timezone
 
 TODAY_DATE = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -66,33 +69,8 @@ def validate_env() -> None:
 
 # ── Drive ─────────────────────────────────────────────────────────────────────
 
-def build_drive_service():
-    sa_info = json.loads(os.environ["GDRIVE_SERVICE_ACCOUNT_JSON"])
-    creds = service_account.Credentials.from_service_account_info(
-        sa_info, scopes=DRIVE_SCOPES
-    )
-    return build("drive", "v3", credentials=creds)
-
-
-def _read_file(service, file_id: str) -> str:
-    """Read a file's content from Drive. Handles both regular files and Google Docs."""
-    if not file_id or not file_id.strip():
-        raise ValueError("Google Drive file ID is missing or empty.")
-
-    file_metadata = service.files().get(fileId=file_id, fields="mimeType").execute()
-    mime_type = file_metadata.get("mimeType", "")
-
-    if mime_type.startswith("application/vnd.google-apps."):
-        request = service.files().export_media(fileId=file_id, mimeType="text/plain")
-    else:
-        request = service.files().get_media(fileId=file_id)
-
-    content = request.execute()
-    return content.decode("utf-8") if isinstance(content, bytes) else content
-
-
 def fetch_profile(service) -> str:
-    return _read_file(service, os.environ["GDRIVE_FILE_ID"])
+    return read_drive_file(service, os.environ["GDRIVE_FILE_ID"])
 
 
 def create_drive_file(service, name: str, content: str) -> str:
@@ -125,26 +103,14 @@ Be factual and specific. Do not add any headers or extra text - just the bullet 
 
 def seed_goals_log(profile_content: str) -> str:
     """Use Gemini to extract current goals from the profile and create the seed entry."""
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    
-    last_err = None
-    models_to_try = ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "gemini-1.5-flash"]
-    for m_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(
-                model_name=m_name,
-                system_instruction=SEED_PROMPT,
-            )
-            response = model.generate_content(
-                f"Here is my profile:\n\n{profile_content}"
-            )
-            goal_bullets = response.text.strip()
-            return f"### Initial Seed: {TODAY_DATE}\n{goal_bullets}\n"
-        except Exception as e:
-            print(f"      Seeding failed with {m_name}, trying next...")
-            last_err = e
-            
-    raise RuntimeError(f"All models failed for seeding. Last error: {last_err}")
+    try:
+        models = ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "gemini-1.5-flash"]
+        prompt = f"Here is my profile:\n\n{profile_content}"
+        response_text = generate_with_fallback(os.environ["GEMINI_API_KEY"], prompt, SEED_PROMPT, models)
+        goal_bullets = response_text.strip()
+        return f"### Initial Seed: {TODAY_DATE}\n{goal_bullets}\n"
+    except Exception as e:
+        raise RuntimeError(f"All models failed for seeding. Last error: {e}")
 
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
@@ -182,7 +148,7 @@ def main():
 
     # 2. Connect to Drive
     print("\n[1/5] Connecting to Google Drive...")
-    drive = build_drive_service()
+    drive = build_drive_service(os.environ["GDRIVE_SERVICE_ACCOUNT_JSON"], DRIVE_SCOPES)
     print("      Connected.")
 
     # 3. Fetch profile
