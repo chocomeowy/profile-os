@@ -104,7 +104,7 @@ Be factual and specific. Do not add any headers or extra text - just the bullet 
 def seed_goals_log(profile_content: str) -> str:
     """Use Gemini to extract current goals from the profile and create the seed entry."""
     try:
-        models = ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite", "gemini-1.5-flash"]
+        models = ["gemini-2.5-flash", "gemini-2.0-flash"]
         prompt = f"Here is my profile:\n\n{profile_content}"
         response_text = generate_with_fallback(os.environ["GEMINI_API_KEY"], prompt, SEED_PROMPT, models)
         goal_bullets = response_text.strip()

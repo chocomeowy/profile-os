@@ -147,10 +147,8 @@ def generate_prompt(profile_content: str, recent_replies: list[str], api_key: st
     
     try:
         models = [
-            "gemini-3.1-flash-lite-preview",
-            "gemini-2.5-flash-lite",
-            "gemini-2.0-flash-lite",
-            "gemini-1.5-flash",
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
         ]
         # Request JSON output
         gen_config = {"response_mime_type": "application/json"}
