@@ -37,8 +37,8 @@ def write_drive_file(service, file_id: str, content: str) -> None:
     service.files().update(fileId=file_id, media_body=media).execute()
 
 
-def get_or_create_inbox_file_id(service, owner_email: str = None) -> str:
-    """Find or create telegram_inbox.json on Google Drive. Optionally shares with owner."""
+def get_or_create_inbox_file_id(service, profile_file_id: str, owner_email: str = None) -> str:
+    """Find or create telegram_inbox.json on Google Drive inside the parent folder of profile.md."""
     try:
         results = service.files().list(
             q="name = 'telegram_inbox.json' and trashed = false",
@@ -51,16 +51,31 @@ def get_or_create_inbox_file_id(service, owner_email: str = None) -> str:
     except Exception as e:
         print(f"[Drive Inbox] Search failed: {e}")
 
+    # Fetch parent folder of profile.md to bypass Service Account storage quota limit
+    parent_id = None
+    if profile_file_id:
+        try:
+            profile_metadata = service.files().get(fileId=profile_file_id, fields="parents").execute()
+            parents = profile_metadata.get("parents", [])
+            if parents:
+                parent_id = parents[0]
+                print(f"[Drive Inbox] Found profile.md parent folder: {parent_id}")
+        except Exception as pe:
+            print(f"[Drive Inbox] Could not fetch profile parents: {pe}")
+
     # Create new file if not found
     file_metadata = {
         "name": "telegram_inbox.json",
         "mimeType": "application/json",
     }
+    if parent_id:
+        file_metadata["parents"] = [parent_id]
+
     media = MediaInMemoryUpload(b"[]", mimetype="application/json")
     try:
         file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
         file_id = file.get("id")
-        print(f"[Drive Inbox] Created 'telegram_inbox.json' with file ID: {file_id}")
+        print(f"[Drive Inbox] Created 'telegram_inbox.json' inside parent folder. File ID: {file_id}")
         
         # Share it if owner email is provided
         if owner_email and owner_email.strip():

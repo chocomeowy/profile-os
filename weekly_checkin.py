@@ -557,6 +557,7 @@ def main():
         print("\n[2/8] Fetching and merging Telegram replies...")
         inbox_file_id = get_or_create_inbox_file_id(
             drive,
+            profile_file_id=GDRIVE_FILE_ID,
             owner_email=os.environ.get("OWNER_EMAIL") or os.environ.get("EMAIL_ADDRESS")
         )
         drive_replies = load_inbox_messages(drive, inbox_file_id)

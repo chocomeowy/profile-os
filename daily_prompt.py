@@ -171,9 +171,10 @@ def main():
     drive = build_drive_service(GDRIVE_SA_JSON, DRIVE_SCOPES)
     profile = fetch_profile(drive)
     
-    # Get or create the Google Drive inbox file ID
+    # Get or create the Google Drive inbox file ID inside parent of profile.md
     inbox_file_id = get_or_create_inbox_file_id(
         drive,
+        profile_file_id=GDRIVE_FILE_ID,
         owner_email=os.environ.get("OWNER_EMAIL") or os.environ.get("EMAIL_ADDRESS")
     )
     
