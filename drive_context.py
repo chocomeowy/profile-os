@@ -40,10 +40,13 @@ def write_drive_file(service, file_id: str, content: str) -> None:
 def get_or_create_inbox_file_id(service, profile_file_id: str, owner_email: str = None) -> str:
     """Find or create telegram_inbox.json on Google Drive inside the parent folder of profile.md."""
     try:
+        # Optimized list search to support shared folders and Shared Drives
         results = service.files().list(
             q="name = 'telegram_inbox.json' and trashed = false",
             spaces="drive",
             fields="files(id, name)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
         ).execute()
         files = results.get("files", [])
         if files:
@@ -73,7 +76,12 @@ def get_or_create_inbox_file_id(service, profile_file_id: str, owner_email: str 
 
     media = MediaInMemoryUpload(b"[]", mimetype="application/json")
     try:
-        file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id",
+            supportsAllDrives=True
+        ).execute()
         file_id = file.get("id")
         print(f"[Drive Inbox] Created 'telegram_inbox.json' inside parent folder. File ID: {file_id}")
         
@@ -90,6 +98,31 @@ def get_or_create_inbox_file_id(service, profile_file_id: str, owner_email: str 
                 
         return file_id
     except Exception as e:
+        # Extract Service Account email for helpful error message
+        sa_email = "your service account's email address"
+        try:
+            import os
+            sa_json = os.environ.get("GDRIVE_SERVICE_ACCOUNT_JSON")
+            if sa_json:
+                import json
+                sa_info = json.loads(sa_json)
+                sa_email = sa_info.get("client_email", sa_email)
+        except Exception:
+            pass
+
+        print("\n" + "="*80)
+        print("[Drive Inbox] ERROR: Google Service Accounts have a 0GB personal storage quota limit.")
+        print("Because the file 'telegram_inbox.json' does not exist yet, the service account tried")
+        print("to create it, which failed with a storageQuotaExceeded error.")
+        print("\nTo fix this immediately, please follow these steps:")
+        print("1. Open Google Drive in your web browser.")
+        print("2. Go to the parent folder of your 'profile.md'.")
+        print("3. Create a new text file named 'telegram_inbox.json' inside that folder.")
+        print("4. Edit the file and write an empty JSON array: []")
+        print(f"5. Ensure this file is shared with your Service Account email: {sa_email}")
+        print("   with 'Editor' or 'Writer' permissions (if not already shared via the parent folder).")
+        print("="*80 + "\n")
+
         print(f"[Drive Inbox] Creation failed: {e}")
         raise e
 
