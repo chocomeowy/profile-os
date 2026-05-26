@@ -29,7 +29,14 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaInMemoryUpload
 
 from telegram_context import acknowledge_telegram_updates, fetch_recent_telegram_notes, summarize_reply_signals
-from drive_context import build_drive_service, read_drive_file, write_drive_file
+from drive_context import (
+    build_drive_service,
+    read_drive_file,
+    write_drive_file,
+    get_or_create_inbox_file_id,
+    load_inbox_messages,
+    save_inbox_messages,
+)
 from llm_context import generate_with_fallback
 import markdown
 
@@ -132,7 +139,7 @@ def fetch_telegram_replies() -> tuple[list[str], int, int]:
         TELEGRAM_CHAT_ID,
         NOW_UTC,
         days=7,
-        acknowledge=False,
+        acknowledge=True,
     )
 
 
@@ -536,30 +543,45 @@ def main():
     validate_env()
     print(f"[Weekly OS] Starting check-in for {TODAY}")
 
-    # Step 0: Read Telegram replies from the past 7 days
+    # Step 1: Connect to Drive
+    print("\n[1/8] Connecting to Google Drive...")
+    drive = build_drive_service(GDRIVE_SA_JSON, DRIVE_SCOPES)
+
+    # Step 2: Fetch and merge Telegram replies (Drive inbox + any new ones)
     replies = []
     total_updates = 0
     max_update_id = 0
+    inbox_file_id = None
+
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        print("\n[0/7] Reading Telegram replies from the past 7 days...")
-        replies, total_updates, max_update_id = fetch_telegram_replies()
-        print(f"      {len(replies)} relevant message(s) found.")
-        if total_updates > len(replies):
-            print(f"      (Note: {total_updates - len(replies)} update(s) were skipped/filtered).")
+        print("\n[2/8] Fetching and merging Telegram replies...")
+        inbox_file_id = get_or_create_inbox_file_id(
+            drive,
+            owner_email=os.environ.get("OWNER_EMAIL") or os.environ.get("EMAIL_ADDRESS")
+        )
+        drive_replies = load_inbox_messages(drive, inbox_file_id)
+        print(f"      Loaded {len(drive_replies)} pending reply(ies) from Google Drive inbox.")
+        
+        new_replies, total_updates, max_update_id = fetch_telegram_replies()
+        print(f"      Fetched {len(new_replies)} new reply(ies) from Telegram.")
+        
+        replies = drive_replies
+        if new_replies:
+            replies.extend(new_replies)
+            seen = set()
+            replies = [r for r in replies if not (r in seen or seen.add(r))]
+            
+        print(f"      Total accumulated replies for this week: {len(replies)}")
     else:
-        print("\n[0/7] Skipping Telegram replies (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set).")
+        print("\n[2/8] Skipping Telegram replies (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set).")
 
-    # Step 1: Connect to Drive
-    print("\n[1/7] Connecting to Google Drive...")
-    drive = build_drive_service(GDRIVE_SA_JSON, DRIVE_SCOPES)
-
-    # Step 2: Fetch profile
-    print("\n[2/7] Fetching profile.md...")
+    # Step 3: Fetch profile
+    print("\n[3/8] Fetching profile.md...")
     profile = fetch_profile(drive)
     print(f"      Loaded ({len(profile)} chars).")
 
-    # Step 3: Fold Telegram replies into profile.md before generating the brief
-    print("\n[3/8] Updating profile.md from Telegram replies...")
+    # Step 4: Fold Telegram replies into profile.md before generating the brief
+    print("\n[4/8] Updating profile.md from Telegram replies...")
     if replies:
         updated_profile = update_profile_from_replies(profile, replies, GEMINI_API_KEY)
         if updated_profile != profile:
@@ -571,34 +593,34 @@ def main():
     else:
         print("      No replies to fold into profile.")
 
-    # Step 4: Staleness check
-    print("\n[4/8] Checking profile freshness...")
+    # Step 5: Staleness check
+    print("\n[5/8] Checking profile freshness...")
     staleness_warning = check_profile_staleness(profile)
     if staleness_warning:
         print(f"      Warning: {staleness_warning}")
     else:
         print("      Profile is current.")
 
-    # Step 5: Fetch goals log
-    print("\n[5/8] Fetching goals log...")
+    # Step 6: Fetch goals log
+    print("\n[6/8] Fetching goals log...")
     goals_log = fetch_goals_log(drive)
     print(f"      Loaded ({len(goals_log)} chars).")
 
-    # Step 6: Compress goals log if needed
-    print("\n[6/8] Compressing goals log (if entries are old enough)...")
+    # Step 7: Compress goals log if needed
+    print("\n[7/8] Compressing goals log (if entries are old enough)...")
     try:
         goals_log = compress_goals_log(goals_log, GEMINI_API_KEY)
         compressed_ok = True
     except Exception as e:
         print(f"      Compression failed: {e}")
 
-    # Step 7: Generate brief
-    print("\n[7/8] Generating brief with Gemini...")
+    # Step 8: Generate brief
+    print("\n[8/8] Generating brief with Gemini...")
     brief = generate_brief(profile, replies, goals_log, staleness_warning, GEMINI_API_KEY)
     print(f"      Brief generated ({len(brief)} chars).")
 
-    # Step 8: Deliver
-    print("\n[8/8] Sending brief...")
+    # Step 9: Deliver
+    print("\n[+] Sending brief...")
     tg_ok = False
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         tg_ok = send_telegram(brief)
@@ -610,20 +632,23 @@ def main():
     print(f"      Email:    {'OK' if email_ok else 'FAILED'}")
 
     if not tg_ok and not email_ok and (TELEGRAM_BOT_TOKEN or EMAIL_ADDRESS):
-        # Only raise if at least one channel was configured but failed
         if not email_ok:
             raise RuntimeError("Email delivery failed.")
 
-    # Post-send: acknowledge Telegram updates + append to goals log
+    # Post-send: acknowledge Telegram updates + clear Drive inbox + append to goals log
     if max_update_id > 0:
         acknowledge_telegram_updates(TELEGRAM_BOT_TOKEN, max_update_id)
+
+    if inbox_file_id:
+        print("\n[+] Clearing Google Drive telegram inbox...")
+        save_inbox_messages(drive, inbox_file_id, [])
+        print("    Drive inbox cleared.")
 
     goal_status = extract_goal_status_section(brief)
     if not GDRIVE_GOALS_LOG_FILE_ID:
         print("\n[!] Skipping goals log update: GDRIVE_GOALS_LOG_FILE_ID not configured.")
     elif not goal_status:
         print("\n[!] Skipping goals log update: '### Goal Status This Week' section not found in brief.")
-        # Debug: Print first few lines of brief to see headers
         print("    Brief starts with:")
         for line in brief.splitlines()[:10]:
             print(f"      {line}")

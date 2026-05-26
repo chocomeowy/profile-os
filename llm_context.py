@@ -17,7 +17,8 @@ def generate_with_fallback(
     api_key: str, 
     prompt: str, 
     system_instruction: str = None, 
-    models: list[str] = None
+    models: list[str] = None,
+    generation_config: dict = None
 ) -> str:
     """
     Attempt generation with a list of fallback models.
@@ -35,7 +36,7 @@ def generate_with_fallback(
                 kwargs["system_instruction"] = system_instruction
                 
             model = genai.GenerativeModel(**kwargs)
-            response = model.generate_content(prompt)
+            response = model.generate_content(prompt, generation_config=generation_config)
             return response.text
         except Exception as e:
             print(f"      {model_name} failed: {e}")
@@ -43,3 +44,4 @@ def generate_with_fallback(
             continue
             
     raise RuntimeError(f"All Gemini models failed. Last error: {last_error}")
+
