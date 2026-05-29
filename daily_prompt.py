@@ -146,17 +146,12 @@ def generate_prompt(profile_content: str, recent_replies: list[str], api_key: st
     prompt_text = "\n".join(parts)
     
     try:
-        models = [
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-        ]
         # Request JSON output
         gen_config = {"response_mime_type": "application/json"}
         return generate_with_fallback(
             api_key,
             prompt_text,
             SYSTEM_PROMPT,
-            models,
             generation_config=gen_config,
         ).strip()
     except Exception as e:
