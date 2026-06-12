@@ -11,7 +11,7 @@ import sys
 import requests
 from datetime import datetime, timezone
 import google.generativeai as genai
-from telegram_context import fetch_recent_telegram_notes, summarize_reply_signals
+from telegram_context import fetch_recent_telegram_notes, summarize_reply_signals, acknowledge_telegram_updates
 from drive_context import (
     build_drive_service,
     read_drive_file,
@@ -177,13 +177,13 @@ def main():
     drive_replies = load_inbox_messages(drive, inbox_file_id)
     print(f"      Existing replies in Google Drive inbox: {len(drive_replies)}")
     
-    # Fetch new replies from Telegram and acknowledge them immediately to prevent 24h expiration
-    new_replies, total_updates, _ = fetch_recent_telegram_notes(
+    # Fetch new replies from Telegram without acknowledging them yet
+    new_replies, total_updates, max_update_id = fetch_recent_telegram_notes(
         TELEGRAM_BOT_TOKEN,
         TELEGRAM_CHAT_ID,
         NOW_UTC,
         days=7,
-        acknowledge=True,
+        acknowledge=False,
     )
     print(f"      New Telegram replies found: {len(new_replies)}")
     if total_updates > len(new_replies):
@@ -198,6 +198,10 @@ def main():
         all_replies = [r for r in all_replies if not (r in seen or seen.add(r))]
         save_inbox_messages(drive, inbox_file_id, all_replies)
         print(f"      Saved merged replies list to Google Drive inbox ({len(all_replies)} total).")
+        
+        # Acknowledge the updates on Telegram now that they are safely saved on Drive
+        if max_update_id > 0:
+            acknowledge_telegram_updates(TELEGRAM_BOT_TOKEN, max_update_id)
     
     # Generate the daily prompt using accumulated context
     nudge_raw = generate_prompt(profile, all_replies, GEMINI_API_KEY)

@@ -10,6 +10,7 @@ New in this version:
   - Warns if your profile.md hasn't been updated in 14+ days
   - Maintains a goals_log.md on Drive with auto-compression at 30 days and 1 year
 """
+from __future__ import annotations
 
 import json
 import os
@@ -139,7 +140,7 @@ def fetch_telegram_replies() -> tuple[list[str], int, int]:
         TELEGRAM_CHAT_ID,
         NOW_UTC,
         days=7,
-        acknowledge=True,
+        acknowledge=False,
     )
 
 
